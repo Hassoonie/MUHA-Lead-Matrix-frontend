@@ -1,0 +1,38 @@
+{
+  "name": "lead-scraper-user-interface",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:backend": "./start-backend.sh",
+    "dev:all": "concurrently -n \"FRONTEND,BACKEND\" -c \"blue,green\" --kill-others-on-fail \"npm run dev\" \"npm run dev:backend\"",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
+    "@types/xlsx": "^0.0.35",
+    "axios": "^1.13.2",
+    "clsx": "^2.0.0",
+    "next": "16.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "recharts": "^2.15.4",
+    "swr": "^2.3.8",
+    "tailwind-merge": "^2.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
