@@ -32,26 +32,39 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
   const [users, setUsers] = useState<Record<string, GHLUser[]>>({});
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [selectedLocationName, setSelectedLocationName] = useState("");
+  const [importProgress, setImportProgress] = useState<{message: string; progress: number; completed: number; total: number} | null>(null);
+  const [importSuccess, setImportSuccess] = useState(false);
 
   // Fetch GHL locations and users on mount (GHL is always connected globally via backend)
-  useEffect(() => {
-    const fetchGHLData = async () => {
-      try {
-        setLoadingLocations(true);
-        // GHL is always connected globally - just fetch locations and users
-        const status = await ghlApi.getConnectionStatus();
-        // Always use locations and users from response (even if connected=false, backend still provides data)
-        setLocations(status.locations || []);
-        setUsers(status.users || {});
-      } catch (err) {
-        console.error("Failed to fetch GHL data:", err);
-        // On error, still allow form to work - locations will be empty but user can still try
-        setLocations([]);
-        setUsers({});
-      } finally {
-        setLoadingLocations(false);
+  const fetchGHLData = async () => {
+    try {
+      setLoadingLocations(true);
+      // GHL is always connected globally - just fetch locations and users
+      const status = await ghlApi.getConnectionStatus();
+      // Always use locations and users from response (even if connected=false, backend still provides data)
+      setLocations(status.locations || []);
+      setUsers(status.users || {});
+      
+      // Log user counts for debugging
+      const muhaId = status.locations?.find(loc => loc.name?.toLowerCase().includes("muha"))?.id;
+      const dialedId = status.locations?.find(loc => loc.name?.toLowerCase().includes("dialed"))?.id;
+      if (muhaId && status.users?.[muhaId]) {
+        console.log(`[GHL] Muha Meds: ${status.users[muhaId].length} users available`);
       }
-    };
+      if (dialedId && status.users?.[dialedId]) {
+        console.log(`[GHL] Dialed Moods: ${status.users[dialedId].length} users available`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch GHL data:", err);
+      // On error, still allow form to work - locations will be empty but user can still try
+      setLocations([]);
+      setUsers({});
+    } finally {
+      setLoadingLocations(false);
+    }
+  };
+
+  useEffect(() => {
     fetchGHLData();
   }, []);
 
@@ -167,6 +180,8 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
 
     setLoading(true);
     setError("");
+    setImportSuccess(false);
+    setImportProgress(null);
 
     try {
       // Parse tags from comma-separated string
@@ -188,21 +203,55 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
       };
 
       // If onImport callback is provided, use it (for bulk operations)
-      // Otherwise, use the default import flow
+      // Otherwise, use the default import flow with progress updates
       let response;
       if (onImport) {
         await onImport(request);
         response = { success: true, message: "Import successful" };
+        setImportSuccess(true);
       } else {
-        response = await ghlApi.import(request);
+        // Use streaming import with progress updates
+        setImportProgress({ message: "Starting import...", progress: 0, completed: 0, total: leadCount });
+        
+        response = await ghlApi.import(request, (progress) => {
+          // Update progress state
+          if (progress.status === "progress" || progress.status === "starting") {
+            setImportProgress({
+              message: progress.message || "Importing...",
+              progress: progress.progress || 0,
+              completed: progress.completed || 0,
+              total: progress.total || leadCount
+            });
+          } else if (progress.status === "complete") {
+            // Import complete - show final progress then success
+            setImportProgress({
+              message: "Complete!",
+              progress: 100,
+              completed: progress.total || leadCount,
+              total: progress.total || leadCount
+            });
+            // Set success after a brief delay to show "Complete!" message
+            setTimeout(() => {
+              setImportSuccess(true);
+              setLoading(false);
+            }, 500);
+          }
+        });
+        
+        // Only set success if not already set by progress callback
+        if (!importSuccess) {
+          setImportSuccess(true);
+        }
       }
 
       if (response.success) {
         setError("");
-        // Trigger success modal via parent component
-        if (onClose) {
-          onClose(); // This will trigger handleImportSuccess in parent
-        }
+        // Show success for a moment, then close
+        setTimeout(() => {
+          if (onClose) {
+            onClose(); // This will trigger handleImportSuccess in parent
+          }
+        }, 2000);
         
         if (response.csv_url) {
           // If CSV mode, trigger download
@@ -230,7 +279,10 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
         setError(errorMessage);
       }
     } finally {
-      setLoading(false);
+      // Don't set loading to false here if success was set - let the progress callback handle it
+      if (!importSuccess) {
+        setLoading(false);
+      }
     }
   };
 
@@ -320,22 +372,48 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
 
         {/* Who do you want to import leads for? (User assignment - Required) */}
         {locationId && (
-          <MultiSelect
-            label="Who do you want to import leads for?"
-            value={assignedUsers}
-            onChange={(values) => {
-              // Handle "nobody" option - if selected, clear all other selections
-              if (values.includes("nobody")) {
-                setAssignedUsers(["nobody"]);
-              } else {
-                // If a real user is selected, remove "nobody" if it was there
-                setAssignedUsers(values.filter(v => v !== "nobody"));
-              }
-              setError("");
-            }}
-            disabled={loading}
-            options={userOptions}
-          />
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-black">Who do you want to import leads for?</label>
+              <button
+                type="button"
+                onClick={fetchGHLData}
+                disabled={loadingLocations}
+                className="text-xs text-[#c5b26f] hover:text-[#a8955a] disabled:text-gray-400 flex items-center gap-1"
+                title="Refresh user list from GHL"
+              >
+                <svg 
+                  className={`w-4 h-4 ${loadingLocations ? 'animate-spin' : ''}`} 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+              </button>
+            </div>
+            <MultiSelect
+              value={assignedUsers}
+              onChange={(values) => {
+                // Handle "nobody" option - if selected, clear all other selections
+                if (values.includes("nobody")) {
+                  setAssignedUsers(["nobody"]);
+                } else {
+                  // If a real user is selected, remove "nobody" if it was there
+                  setAssignedUsers(values.filter(v => v !== "nobody"));
+                }
+                setError("");
+              }}
+              disabled={loading || loadingLocations}
+              options={userOptions}
+            />
+            {locationId && users[locationId] && (
+              <p className="text-xs text-black/60 -mt-4">
+                {users[locationId].length} user{users[locationId].length !== 1 ? 's' : ''} available for {selectedLocationName || 'this location'}
+              </p>
+            )}
+          </div>
         )}
 
         {/* What do you want to tag the leads? */}
@@ -368,17 +446,40 @@ export default function GHLImportForm({ jobId, leads, selectedLeadIndices, onClo
 
 
         {/* Import Progress Indicator */}
-        {loading && (
+        {loading && importProgress && !importSuccess && (
           <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="flex items-center gap-3">
               <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <div>
-                <p className="text-sm text-blue-800 font-medium">Importing to GoHighLevel...</p>
+              <div className="flex-1">
+                <p className="text-sm text-blue-800 font-medium">{importProgress.message}</p>
                 <p className="text-xs text-blue-600 mt-1">
-                  Creating {leadCount} {leadCount === 1 ? 'contact' : 'contacts'} in GHL. Please wait...
+                  {importProgress.completed} of {importProgress.total} contacts created ({importProgress.progress}%)
+                </p>
+                <div className="mt-2 w-full bg-blue-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                    style={{ width: `${importProgress.progress}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Success Message */}
+        {importSuccess && (
+          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <div>
+                <p className="text-sm text-green-800 font-medium">Import Successful!</p>
+                <p className="text-xs text-green-600 mt-1">
+                  All contacts have been imported to GoHighLevel successfully.
                 </p>
               </div>
             </div>

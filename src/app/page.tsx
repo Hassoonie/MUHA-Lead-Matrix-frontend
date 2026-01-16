@@ -29,6 +29,18 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showTemplates, setShowTemplates] = useState(false);
 
+  const extractLimitFromQuery = (text: string): number | undefined => {
+    const match = text.match(/(\d{1,4})/);
+    if (!match) {
+      return undefined;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    return value;
+  };
+
   // Show loading state while checking authentication
   if (authLoading || !isAuthenticated) {
     return (
@@ -49,9 +61,11 @@ export default function Home() {
     setError("");
 
     try {
+      const trimmedQuery = query.trim();
+      const inferredLimit = extractLimitFromQuery(trimmedQuery);
       const request: ScrapeRequest = {
-        query: query.trim(),
-        limit: 20,
+        query: trimmedQuery,
+        limit: inferredLimit,
       };
 
       const response = await scrapeApi.start(request);

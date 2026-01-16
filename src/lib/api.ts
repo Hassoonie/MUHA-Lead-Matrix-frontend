@@ -156,6 +156,7 @@ export interface JobProgress {
   queries_completed: number;
   queries_total: number;
   leads_collected: number;
+  target_leads: number;
   duplicates_removed: number;
   failed_queries: number;
   elapsed_time?: string;
@@ -189,6 +190,7 @@ export interface JobResult {
   completed_at?: string;
   leads: Lead[];
   total_leads: number;
+  target_leads: number;
   file_path?: string;
   execution_plan?: ExecutionPlan;
 }
@@ -200,6 +202,7 @@ export interface JobSummary {
   created_at: string;
   completed_at?: string;
   total_leads: number;
+  target_leads: number;
   queries_total: number;
   queries_completed: number;
   niche?: string;
@@ -277,7 +280,9 @@ export const scrapeApi = {
 
   getResults: async (jobId: string): Promise<JobResult> => {
     try {
-      const response = await api.get<JobResult>(`/api/scrape/${jobId}/results`);
+      const response = await api.get<JobResult>(`/api/scrape/${jobId}/results`, {
+        timeout: 600000  // 10 minute timeout for large result sets (191+ leads)
+      });
       return response.data;
     } catch (error: any) {
       // Handle 404 gracefully - job might not exist (backend restart)
@@ -339,7 +344,7 @@ export const scrapeApi = {
       location_id: ghlConfig.location_id,
       assigned_to: ghlConfig.assigned_to,
       tags: ghlConfig.tags
-    });
+    }, { timeout: 600000 }); // 10 minutes timeout
     return response.data;
   },
 };
@@ -396,8 +401,91 @@ export const authApi = {
 
 // GHL Import API
 export const ghlApi = {
-  import: async (request: GHLImportRequest): Promise<GHLImportResponse> => {
-    const response = await api.post<GHLImportResponse>("/api/ghl/import", request);
+  import: async (request: GHLImportRequest, onProgress?: (progress: any) => void): Promise<GHLImportResponse> => {
+    // Use streaming endpoint for progress updates
+    if (onProgress) {
+      return new Promise((resolve, reject) => {
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+          reject(new Error("Not authenticated. Please log in."));
+          return;
+        }
+        
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        
+        // Use fetch with streaming
+        fetch(`${apiUrl}/api/ghl/import-stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          credentials: 'include', // Include cookies for CORS
+          body: JSON.stringify(request)
+        }).then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          
+          const reader = response.body?.getReader();
+          const decoder = new TextDecoder();
+          
+          if (!reader) {
+            reject(new Error("No response body"));
+            return;
+          }
+          
+          let buffer = '';
+          
+          const readStream = () => {
+            reader.read().then(({ done, value }) => {
+              if (done) {
+                reject(new Error("Stream ended unexpectedly"));
+                return;
+              }
+              
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || ''; // Keep incomplete line in buffer
+              
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    
+                    if (data.status === 'complete') {
+                      resolve({
+                        success: true,
+                        message: data.message,
+                        imported_count: data.result?.success_count || 0,
+                        failed_count: data.result?.failed_count || 0,
+                        errors: data.result?.errors || [],
+                        warnings: data.result?.duplicate_count > 0 ? [`${data.result.duplicate_count} duplicate(s) skipped`] : undefined
+                      });
+                      return;
+                    } else if (data.status === 'error') {
+                      reject(new Error(data.error || "Import failed"));
+                      return;
+                    } else if (data.status !== 'heartbeat' && onProgress) {
+                      onProgress(data);
+                    }
+                  } catch (e) {
+                    console.error("Error parsing SSE data:", e);
+                  }
+                }
+              }
+              
+              readStream(); // Continue reading
+            }).catch(reject);
+          };
+          
+          readStream();
+        }).catch(reject);
+      });
+    }
+    
+    // Fallback to regular endpoint with increased timeout (10 minutes)
+    const response = await api.post<GHLImportResponse>("/api/ghl/import", request, { timeout: 600000 });
     return response.data;
   },
   authorize: (): void => {
@@ -454,6 +542,7 @@ export interface UserDetailedStats {
     query: string;
     status: string;
     leads_collected: number;
+    target_leads?: number;
     created_at: string;
     elapsed_time?: string;
   }>;

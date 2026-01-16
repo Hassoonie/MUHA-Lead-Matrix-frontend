@@ -8,14 +8,20 @@ interface ViewLeadsModalProps {
   onClose: () => void;
   leads: Lead[];
   isLoading?: boolean;
+  totalLeads?: number;
 }
 
-export default function ViewLeadsModal({ isOpen, onClose, leads, isLoading = false }: ViewLeadsModalProps) {
+export default function ViewLeadsModal({ isOpen, onClose, leads, isLoading = false, totalLeads }: ViewLeadsModalProps) {
+  const leadCount = leads?.length || 0;
+  const title =
+    typeof totalLeads === "number" && totalLeads > leadCount
+      ? `All Leads (showing ${leadCount} of ${totalLeads})`
+      : `All Leads (${leadCount})`;
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`All Leads (${leads?.length || 0})`}
+      title={title}
       className="max-w-5xl"
     >
       <div className="space-y-4">

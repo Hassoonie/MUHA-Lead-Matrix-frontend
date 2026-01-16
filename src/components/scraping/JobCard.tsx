@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import ProgressBar from "./ProgressBar";
@@ -15,6 +16,21 @@ interface JobCardProps {
 }
 
 export default function JobCard({ job, onDelete, isSelected = false, onSelect }: JobCardProps) {
+  const canViewResults = job.status === "completed" || job.status === "running" || job.status === "pending";
+  const isActive = job.status === "running" || job.status === "pending";
+  const [animatedDots, setAnimatedDots] = useState(1);
+
+  useEffect(() => {
+    if (!isActive) {
+      setAnimatedDots(1);
+      return;
+    }
+    const interval = setInterval(() => {
+      setAnimatedDots((prev) => (prev % 3) + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isActive]);
+
   const getStatusVariant = (status: string) => {
     switch (status) {
       case "completed":
@@ -86,6 +102,12 @@ export default function JobCard({ job, onDelete, isSelected = false, onSelect }:
                 {job.status}
               </Badge>
             </div>
+            {isActive && (
+              <p className="text-xs text-black/60 dark:text-white/60">
+                Running, generating leads
+                {".".repeat(animatedDots)}
+              </p>
+            )}
           </div>
         </div>
         {onDelete && job.status !== "running" && (
@@ -110,11 +132,13 @@ export default function JobCard({ job, onDelete, isSelected = false, onSelect }:
         </div>
         <div>
           <span className="text-black/70 dark:text-white/70">Leads</span>
-          <p className="font-semibold text-black dark:text-white">{job.total_leads}</p>
+          <p className="font-semibold text-black dark:text-white">
+            {job.total_leads}{job.target_leads ? ` / ${job.target_leads}` : ""}
+          </p>
         </div>
       </div>
 
-      {job.status === "completed" && (
+      {canViewResults && (
         <>
           {(job.csv_downloaded || (job.ghl_uploads && job.ghl_uploads.length > 0)) && (
             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 mb-4">

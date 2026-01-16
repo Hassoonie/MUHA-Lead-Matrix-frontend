@@ -393,6 +393,7 @@ function UserDetailContent() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-blue-600 dark:text-blue-400">
                           {scrape.leads_collected}
+                          {scrape.target_leads ? ` / ${scrape.target_leads}` : ""}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                           {scrape.elapsed_time || "-"}

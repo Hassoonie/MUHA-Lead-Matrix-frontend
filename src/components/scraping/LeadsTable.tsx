@@ -12,12 +12,14 @@ interface LeadsTableProps {
   leads: Lead[];
   selectedLeads?: number[];
   onSelectionChange?: (selectedIndices: number[]) => void;
+  totalLeads?: number;
 }
 
 export default function LeadsTable({ 
   leads, 
   selectedLeads = [], 
-  onSelectionChange 
+  onSelectionChange,
+  totalLeads
 }: LeadsTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortField, setSortField] = useState<keyof Lead | null>(null);
@@ -236,7 +238,9 @@ export default function LeadsTable({
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-4">
           <div className="flex items-center gap-4">
             <h2 className="text-xl font-semibold text-black">
-              Leads ({filteredAndSortedLeads.length})
+              {typeof totalLeads === "number" && totalLeads > filteredAndSortedLeads.length
+                ? `Leads (showing ${filteredAndSortedLeads.length} of ${totalLeads})`
+                : `Leads (${filteredAndSortedLeads.length})`}
             </h2>
             {activeFiltersCount > 0 && (
               <span className="text-xs bg-[#c5b26f] text-black px-2 py-1 rounded-full">

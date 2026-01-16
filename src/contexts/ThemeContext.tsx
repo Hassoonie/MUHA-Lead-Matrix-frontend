@@ -13,24 +13,30 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  // Initialize with "light" to match server render - will be updated in useEffect after mount
   const [theme, setThemeState] = useState<Theme>("light");
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // Check localStorage or system preference
-    const savedTheme = localStorage.getItem("theme") as Theme | null;
-    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    const initialTheme = savedTheme || systemTheme;
+    // Mark as mounted after client-side hydration
+    setMounted(true);
     
-    setThemeState(initialTheme);
-    // Immediately update the class
-    const root = document.documentElement;
-    if (initialTheme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
+    // Check localStorage or system preference only on client-side
+    if (typeof window !== "undefined") {
+      const savedTheme = localStorage.getItem("theme") as Theme | null;
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const initialTheme = savedTheme || systemTheme;
+      
+      // Update state and apply class
+      setThemeState(initialTheme);
+      const root = document.documentElement;
+      if (initialTheme === "dark") {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
     }
   }, []);
-
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
@@ -50,7 +56,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setTheme(newTheme);
   };
 
-  // Always provide the context, even before mount to prevent errors
+  // Prevent flash of unstyled content by only rendering theme-dependent content after mount
+  // But keep context available immediately to prevent errors
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
       {children}

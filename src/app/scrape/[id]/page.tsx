@@ -26,6 +26,8 @@ export default function ScrapeDetailPage() {
   const [fetchingLeads, setFetchingLeads] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [modalLeads, setModalLeads] = useState<JobResult["leads"]>([]);
+  const [animatedDots, setAnimatedDots] = useState(1);
+  const [maxLeadsCollected, setMaxLeadsCollected] = useState(0);
 
   const { data: jobStatus, error, mutate } = useSWR(
     jobId ? `/api/scrape/${jobId}/status` : null,
@@ -33,16 +35,21 @@ export default function ScrapeDetailPage() {
     { refreshInterval: 2000 }
   );
 
+  const statusLower = jobStatus?.status?.toLowerCase();
+  const shouldFetchResults = Boolean(
+    jobId && (statusLower === "running" || statusLower === "completed")
+  );
+  const resultsRefreshInterval = statusLower === "running" ? 2000 : 0;
+
   const { data: jobResults, error: resultsError, isLoading: resultsLoading, mutate: mutateResults } = useSWR(
-    jobId && jobStatus?.status?.toLowerCase() === "completed"
-      ? `/api/scrape/${jobId}/results`
-      : null,
+    shouldFetchResults ? `/api/scrape/${jobId}/results` : null,
     () => scrapeApi.getResults(jobId),
     {
       revalidateOnFocus: true,
       revalidateOnReconnect: true,
       errorRetryCount: 3,
       errorRetryInterval: 2000,
+      refreshInterval: resultsRefreshInterval,
       shouldRetryOnError: (error) => {
         // Don't retry on 404 errors (job doesn't exist)
         return error?.response?.status !== 404;
@@ -106,10 +113,10 @@ export default function ScrapeDetailPage() {
     };
   }, [jobId, jobStatus?.status, mutate]);
 
-  // Ensure jobResults is fetched when job completes
+  // Ensure jobResults is fetched when job is running or completes
   useEffect(() => {
     const status = jobStatus?.status?.toLowerCase();
-    if (status === "completed" && !jobResults && !resultsLoading && jobId) {
+    if ((status === "completed" || status === "running") && !jobResults && !resultsLoading && jobId) {
       mutateResults().catch((error) => {
         console.error("Failed to fetch results on job completion:", error);
       });
@@ -124,7 +131,39 @@ export default function ScrapeDetailPage() {
     }
   }, [jobResults]);
 
-  const progress = wsProgress || jobStatus;
+  useEffect(() => {
+    setMaxLeadsCollected(0);
+  }, [jobId]);
+
+  const baseProgress = jobStatus || wsProgress;
+  const wsLeadsCollected = wsProgress?.leads_collected ?? 0;
+  const statusLeadsCollected = jobStatus?.leads_collected ?? 0;
+  const resultsLeadsCollected = jobResults?.leads?.length ?? 0;
+  const baseLeadsCollected = Math.max(
+    statusLeadsCollected,
+    resultsLeadsCollected,
+    wsLeadsCollected
+  );
+
+  useEffect(() => {
+    if (baseLeadsCollected > maxLeadsCollected) {
+      setMaxLeadsCollected(baseLeadsCollected);
+    }
+  }, [baseLeadsCollected, maxLeadsCollected]);
+
+  const targetLeads = baseProgress?.target_leads || jobStatus?.target_leads || wsProgress?.target_leads || 0;
+  const rawPercent = targetLeads > 0 ? (maxLeadsCollected / targetLeads) * 100 : (baseProgress?.progress_percent || 0);
+  const statusForPercent = baseProgress?.status?.toLowerCase() || "";
+  const cappedPercent = statusForPercent === "running" ? Math.min(99, rawPercent) : Math.min(100, rawPercent);
+  const progress = baseProgress
+    ? {
+        ...baseProgress,
+        leads_collected: maxLeadsCollected,
+        progress_percent: statusForPercent === "completed" ? 100 : cappedPercent,
+      }
+    : baseProgress;
+  const effectiveLeadsCollected = maxLeadsCollected;
+  const isRunning = progress?.status?.toLowerCase() === "running";
 
   // Fetch leads when modal opens if not already loaded
   const fetchLeadsIfNeeded = useCallback(async (): Promise<JobResult | null> => {
@@ -133,9 +172,8 @@ export default function ScrapeDetailPage() {
       return jobResults;
     }
 
-    // Only fetch if job is completed
     const status = jobStatus?.status?.toLowerCase();
-    if (status !== "completed") {
+    if (status !== "completed" && status !== "running" && status !== "pending") {
       return null;
     }
 
@@ -187,6 +225,17 @@ export default function ScrapeDetailPage() {
       setFetchingLeads(false);
     }
   }, [jobId, jobStatus?.status, jobStatus?.leads_collected, jobResults, mutateResults]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      setAnimatedDots(1);
+      return;
+    }
+    const interval = setInterval(() => {
+      setAnimatedDots((prev) => (prev % 3) + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isRunning]);
 
 
   const handleDownload = async () => {
@@ -285,6 +334,13 @@ export default function ScrapeDetailPage() {
 
           {(progress.status?.toLowerCase() === "running" || progress.status?.toLowerCase() === "pending") && (
             <div className="mb-6">
+            {isRunning && (
+                <p className="text-sm text-black/70 dark:text-white/70 mb-2">
+                  {progress.current_query?.toLowerCase().includes("email")
+                    ? progress.current_query
+                    : `Running, generating leads${".".repeat(animatedDots)}`}
+                </p>
+              )}
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-black/70 dark:text-white/70">Overall Progress</span>
                 <span className="font-medium text-black dark:text-white">{progress.progress_percent?.toFixed(1) || 0}%</span>
@@ -302,7 +358,10 @@ export default function ScrapeDetailPage() {
             </div>
             <div>
               <p className="text-sm text-black/70 dark:text-white/70 mb-1">Leads Collected</p>
-              <p className="text-2xl font-bold text-black dark:text-white">{progress.leads_collected}</p>
+              <p className="text-2xl font-bold text-black dark:text-white">
+                {effectiveLeadsCollected}
+                {progress.target_leads ? ` / ${progress.target_leads}` : ""}
+              </p>
             </div>
             <div>
               <p className="text-sm text-black/70 dark:text-white/70 mb-1">Duplicates</p>
@@ -320,15 +379,18 @@ export default function ScrapeDetailPage() {
                 <span className="font-medium">Elapsed Time:</span> {progress.elapsed_time}
               </p>
             )}
-            {progress.estimated_time_remaining && progress.status === "running" && (
+            {progress.status === "running" && (
               <p className="text-sm text-black/70 dark:text-white/70">
-                <span className="font-medium">Time Remaining:</span> <span className="text-[#c5b26f]">{progress.estimated_time_remaining}</span>
+                <span className="font-medium">Time Remaining:</span>{" "}
+                <span className="text-[#c5b26f]">
+                  {progress.estimated_time_remaining || "Estimating..."}
+                </span>
               </p>
             )}
           </div>
 
           {/* Quick Actions - Show when completed with leads */}
-          {((progress.status?.toLowerCase() === "completed" || jobStatus?.status?.toLowerCase() === "completed") && ((progress.leads_collected || 0) > 0 || (jobStatus?.leads_collected || 0) > 0)) && (
+          {((progress.status?.toLowerCase() === "completed" || progress.status?.toLowerCase() === "running" || progress.status?.toLowerCase() === "pending") && ((progress.leads_collected || 0) > 0 || (jobStatus?.leads_collected || 0) > 0)) && (
             <div className="mt-6 pt-6 border-t border-[#f0f5fa]">
               {(fetchError || resultsError) && (
                 <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -425,9 +487,21 @@ export default function ScrapeDetailPage() {
           )}
 
           {progress.current_query && (
-            <div className="mt-4 p-4 bg-[#f0f5fa] dark:bg-gray-700 rounded-lg">
-              <p className="text-sm text-black/70 dark:text-white/70 mb-1">Currently Processing</p>
-              <p className="font-medium text-black dark:text-white">{progress.current_query}</p>
+            <div className={`mt-4 p-4 rounded-lg ${
+              progress.current_query.toLowerCase().includes("email")
+                ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700"
+                : "bg-[#f0f5fa] dark:bg-gray-700"
+            }`}>
+              <p className="text-sm text-black/70 dark:text-white/70 mb-1">
+                {progress.current_query.toLowerCase().includes("email")
+                  ? "Enriching Leads — this could take a while"
+                  : "Currently Processing"}
+              </p>
+              <p className={`font-medium ${
+                progress.current_query.toLowerCase().includes("email")
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-black dark:text-white"
+              }`}>{progress.current_query}</p>
             </div>
           )}
 
@@ -448,6 +522,7 @@ export default function ScrapeDetailPage() {
           }}
           leads={modalLeads.length > 0 ? modalLeads : (jobResults?.leads || [])}
           isLoading={fetchingLeads}
+          totalLeads={effectiveLeadsCollected}
         />
 
         {/* GHL Import Modal */}
@@ -463,8 +538,8 @@ export default function ScrapeDetailPage() {
           isLoading={fetchingLeads}
         />
 
-        {/* Results - Always show when job is completed */}
-        {progress.status?.toLowerCase() === "completed" && (
+        {/* Results - Show when job is running or completed */}
+        {(progress.status?.toLowerCase() === "completed" || progress.status?.toLowerCase() === "running") && (
           <>
             {resultsLoading ? (
               <Card>
@@ -504,14 +579,15 @@ export default function ScrapeDetailPage() {
                   leads={jobResults.leads}
                   selectedLeads={selectedLeads}
                   onSelectionChange={setSelectedLeads}
+                  totalLeads={effectiveLeadsCollected}
                 />
               </>
             ) : (
               <Card>
                 <div className="text-center py-8">
                   <p className="text-black/70 dark:text-white/70 mb-4">
-                    {progress.leads_collected > 0 
-                      ? "Leads may still be processing. Try downloading the CSV file or refreshing the page."
+                  {progress.leads_collected > 0 
+                      ? "Leads are still being generated. This list will update as more results arrive."
                       : "No leads were collected for this scrape."}
                   </p>
                   <div className="flex gap-3 justify-center">

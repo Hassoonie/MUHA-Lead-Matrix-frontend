@@ -98,6 +98,3 @@ export function getErrorMessage(error: any): string {
   // Default message
   return error?.message || "An unexpected error occurred. Please try again.";
 }
-
-// Note: Error boundary implementation removed for now
-// Can be added back when needed with proper React types

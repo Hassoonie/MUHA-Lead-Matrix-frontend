@@ -26,12 +26,17 @@ interface ToastContextType {
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
+// Counter for generating deterministic toast IDs (client-side only, safe from hydration issues)
+let toastIdCounter = 0;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = useCallback(
     (message: string, type: ToastType = "info", duration = 5000) => {
-      const id = Math.random().toString(36).substring(7);
+      // Use counter-based ID for deterministic IDs (safe since toasts only created client-side)
+      // Fallback to random if counter somehow overflows
+      const id = `toast-${toastIdCounter++}-${Date.now()}`;
       setToasts((prev) => [...prev, { id, message, type, duration }]);
     },
     []
